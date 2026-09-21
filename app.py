@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import joblib
+import shap
 
 
 # -----------------------------
@@ -20,6 +21,9 @@ st.set_page_config(
 
 model = joblib.load("churn_model.pkl")
 
+# Extract XGBoost model from Pipeline
+xgb_model = model.named_steps["model"]
+
 
 # -----------------------------
 # Title
@@ -28,13 +32,16 @@ model = joblib.load("churn_model.pkl")
 st.title("📊 Customer Churn Predictor")
 
 st.write(
-    "Enter customer information to predict the probability of customer churn."
+    "Predict customer churn probability and understand the factors "
+    "behind the prediction using Explainable AI."
 )
 
 
 # -----------------------------
 # Customer Information
 # -----------------------------
+
+st.subheader("Customer Information")
 
 age = st.number_input(
     "Age",
@@ -113,14 +120,17 @@ if st.button("🔮 Predict Churn"):
     }])
 
 
-    # Prediction
+    # -----------------------------
+    # Model Prediction
+    # -----------------------------
+
     prediction = model.predict(input_data)[0]
 
     probability = model.predict_proba(input_data)[0][1]
 
 
     # -----------------------------
-    # Display Results
+    # Display Prediction
     # -----------------------------
 
     st.divider()
@@ -131,7 +141,6 @@ if st.button("🔮 Predict Churn"):
         "Churn Probability",
         f"{probability * 100:.2f}%"
     )
-
 
     if prediction == 1:
 
@@ -148,3 +157,82 @@ if st.button("🔮 Predict Churn"):
         st.write(
             "This customer is predicted to stay."
         )
+
+
+    # -----------------------------
+    # SHAP Explainability
+    # -----------------------------
+
+    st.divider()
+
+    st.subheader("🧠 Why did the model make this prediction?")
+
+    st.write(
+        "SHAP shows how each feature contributed to the model's prediction."
+    )
+
+    # Create SHAP explainer
+    explainer = shap.TreeExplainer(xgb_model)
+
+    shap_values = explainer.shap_values(input_data)
+
+    # Handle different SHAP output formats
+    if isinstance(shap_values, list):
+        shap_values = shap_values[1]
+
+    if len(shap_values.shape) == 2:
+        shap_values = shap_values[0]
+
+    # Feature names
+    feature_names = input_data.columns
+
+    # Create explanation dataframe
+    explanation = pd.DataFrame({
+        "Feature": feature_names,
+        "SHAP Value": shap_values
+    })
+
+    # Absolute importance
+    explanation["Importance"] = explanation["SHAP Value"].abs()
+
+    # Sort by importance
+    explanation = explanation.sort_values(
+        "Importance",
+        ascending=False
+    )
+
+    # Top 6 features
+    top_features = explanation.head(6)
+
+    st.write("### Top Factors")
+
+    for _, row in top_features.iterrows():
+
+        feature = row["Feature"]
+        shap_value = row["SHAP Value"]
+
+        if shap_value > 0:
+
+            st.write(
+                f"🔴 **{feature}** increased the predicted churn risk."
+            )
+
+        else:
+
+            st.write(
+                f"🟢 **{feature}** decreased the predicted churn risk."
+            )
+
+
+    # -----------------------------
+    # SHAP Chart
+    # -----------------------------
+
+    chart_data = top_features.set_index("Feature")["SHAP Value"]
+
+    st.bar_chart(chart_data)
+
+    st.caption(
+        "Positive SHAP values increase churn risk, while negative "
+        "values decrease churn risk."
+    )
